@@ -1,1 +1,7 @@
+requests
+edge-tts
+gTTS
+google-api-python-client
+google-auth
+google-auth-httplib2
 
