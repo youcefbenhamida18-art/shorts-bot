@@ -1,0 +1,26 @@
+{
+ "channel_name": "Little Oak Tales",
+ "tagline": "Gentle stories for sweet little dreams.",
+ "style": "Soft children's picture-book illustration featuring gentle pastel colors, rounded shapes, clean outlines, warm sunlit glow, and whimsical cozy details.",
+ "world": "A cozy, sun-dappled woodland village named Whispering Hollow, filled with miniature hollow-tree houses, soft mossy paths, and glowing flower gardens.",
+ "characters": [
+  {
+   "name": "Pip",
+   "kind": "mouse",
+   "look": "A tiny chestnut-brown mouse wearing oversized mint-green overalls, big round glossy black eyes, a pink button nose, and soft velvety ears.",
+   "personality": "Curious, gentle, and always eager to learn something new each day."
+  },
+  {
+   "name": "Barnaby",
+   "kind": "bear cub",
+   "look": "A chubby cream-colored bear cub wearing a cozy mustard-yellow knitted scarf, soft black eyes, a warm smile, and fuzzy round ears.",
+   "personality": "Kind-hearted, patient, quiet, and loves sharing delicious homemade berry snacks."
+  },
+  {
+   "name": "Flora",
+   "kind": "hedgehog",
+   "look": "A small round hedgehog with soft cream spines, wearing a little lavender apron with a pocket, bright eyes, and tiny wooden glasses.",
+   "personality": "Wise, nurturing, soft-spoken, and wonderful at giving gentle comforting advice."
+  }
+ ]
+}
