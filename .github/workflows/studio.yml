@@ -1,0 +1,85 @@
+name: Studio
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+    - cron: "0 8 * * *"
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "kids_short, kids_long, manager or branding"
+        type: choice
+        default: kids_short
+        options: [kids_short, kids_long, manager, branding]
+      mode:
+        description: "dry = test, private = upload private, publish = real"
+        type: choice
+        default: dry
+        options: [dry, private, publish]
+      count:
+        description: "How many videos"
+        default: "1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: studio
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      JOB: ${{ github.event.inputs.job || (github.event.schedule == '0 6 * * *' && 'kids_long') || (github.event.schedule == '0 8 * * *' && 'kids_short') || 'manager' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install ffmpeg and fonts
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+      - name: Install Python packages
+        run: pip install -r requirements.txt
+      - name: Run
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_REFRESH_TOKEN_KIDS: ${{ secrets.YT_REFRESH_TOKEN_KIDS }}
+          MODE: ${{ github.event.inputs.mode || (startsWith(env.JOB, 'kids') && (vars.KIDS_MODE || 'private')) || (vars.MANAGER_MODE || 'dry') }}
+          COUNT: ${{ github.event.inputs.count || (env.JOB == 'kids_long' && vars.LONG_PER_DAY) || (env.JOB == 'kids_short' && vars.SHORTS_PER_DAY) || '' }}
+          KIDS_LANG: ${{ vars.KIDS_LANG || 'en' }}
+          TREND_QUERIES: ${{ vars.TREND_QUERIES }}
+        run: |
+          case "$JOB" in
+            kids_long)  KIDS_FORMAT=long python kids.py ;;
+            kids_short) KIDS_FORMAT=short python kids.py ;;
+            branding)   TASK=branding python manager.py ;;
+            *)          python manager.py ;;
+          esac
+      - name: Save state
+        if: always()
+        run: |
+          git config user.name "shorts-bot"
+          git config user.email "shorts-bot@users.noreply.github.com"
+          for f in kids_bible.json kids_history.json manager_state.json trends.json; do
+            if [ -f "$f" ]; then git add "$f"; fi
+          done
+          git diff --cached --quiet || (git commit -m "update state" && git pull --rebase -q && git push)
+      - name: Keep test videos for 2 days
+        if: always() && github.event.inputs.mode == 'dry'
+        uses: actions/upload-artifact@v4
+        with:
+          name: videos
+          path: |
+            out/*.mp4
+            out/*.jpg
+            out/*.png
+          retention-days: 2
+          if-no-files-found: ignore
