@@ -199,29 +199,75 @@ def image_prompt(scene, bible):
             "No text, no letters, no watermark. Cute, friendly, safe for toddlers.")[:1400]
 
 
+class ImageConfig(Exception):
+    """Cloudflare refuses the request itself (wrong key, wrong account, bad format): retrying is pointless."""
+
+
+FATAL = []
+
+
+CF_MODELS = ["@cf/black-forest-labs/flux-1-schnell", "@cf/bytedance/stable-diffusion-xl-lightning",
+             "@cf/lykon/dreamshaper-8-lcm", "@cf/stabilityai/stable-diffusion-xl-base-1.0"]
+_cf = {"models": None, "model": None}
+
+
+def cf_base():
+    return (f"https://api.cloudflare.com/client/v4/accounts/{env('CF_ACCOUNT_ID')}",
+            {"Authorization": f"Bearer {env('CF_API_TOKEN')}"})
+
+
+def cf_models():
+    """Image models to try, newest working one first. CF_IMAGE_MODEL forces one."""
+    if env("CF_IMAGE_MODEL"):
+        return [env("CF_IMAGE_MODEL")]
+    if _cf["models"] is None:
+        names = list(CF_MODELS)
+        try:  # keep only the models this account can really use
+            base, hdr = cf_base()
+            r = requests.get(base + "/ai/models/search", headers=hdr,
+                             params={"task": "Text-to-Image", "per_page": 50}, timeout=30)
+            listed = [m.get("name") for m in r.json().get("result", []) if isinstance(m, dict)]
+            names = [n for n in CF_MODELS if n in listed] or names
+            print("  cloudflare image models:", names)
+        except Exception as e:
+            print("  (cloudflare model list unavailable:", repr(e)[:90], ")")
+        _cf["models"] = names
+    return _cf["models"]
+
+
+def cf_bodies(model, prompt):
+    steps = {"steps": 4} if "flux" in model else {"num_steps": 8}
+    return [{"prompt": prompt, **steps, "width": IMG_W, "height": IMG_H}, {"prompt": prompt, **steps}, {"prompt": prompt}]
+
+
 def img_cloudflare(prompt, seed):
-    url = (f"https://api.cloudflare.com/client/v4/accounts/{env('CF_ACCOUNT_ID')}"
-           "/ai/run/@cf/black-forest-labs/flux-1-schnell")
-    hdr = {"Authorization": f"Bearer {env('CF_API_TOKEN')}"}
-    bodies = [{"prompt": prompt, "steps": 4, "seed": seed, "width": IMG_W, "height": IMG_H},
-              {"prompt": prompt, "steps": 4, "seed": seed}]  # second try: model without size options
-    for body in bodies:
-        r = requests.post(url, headers=hdr, json=body, timeout=120)
-        low = r.text.lower()
-        if r.status_code == 402 or "daily free allocation" in low or "4006" in low:
-            raise ImageQuota(r.text[:160])
-        if r.status_code == 429:
-            raise RuntimeError("rate limited, retrying")
-        if r.status_code == 400 and "width" in body:
-            continue
-        r.raise_for_status()
-        if r.headers.get("content-type", "").startswith("image/"):
-            return r.content
-        data = r.json()
-        if not data.get("success", True):
-            raise RuntimeError(str(data.get("errors"))[:160])
-        return base64.b64decode(data["result"]["image"])
-    raise RuntimeError("cloudflare returned no image")
+    base, hdr = cf_base()
+    models = cf_models()
+    if _cf["model"] in models:
+        models = [_cf["model"]] + [m for m in models if m != _cf["model"]]
+    last = "no model answered"
+    for model in models:
+        for body in cf_bodies(model, prompt):
+            r = requests.post(f"{base}/ai/run/{model}", headers=hdr, json=body, timeout=150)
+            low = r.text.lower()
+            if r.status_code == 402 or "daily free allocation" in low or "4006" in low:
+                raise ImageQuota(r.text[:200])
+            if r.status_code == 429:
+                raise RuntimeError("rate limited, retrying")
+            if r.status_code in (401, 403):
+                raise RuntimeError(f"HTTP {r.status_code} token rejected - check CF_API_TOKEN permission and CF_ACCOUNT_ID: {r.text[:300]}")
+            if r.status_code in (400, 404):
+                last = f"HTTP {r.status_code} {model} {sorted(body)}: {r.text[:300]}"
+                continue
+            r.raise_for_status()
+            _cf["model"] = model
+            if r.headers.get("content-type", "").startswith("image/"):
+                return r.content
+            data = r.json()
+            if not data.get("success", True):
+                raise RuntimeError(str(data.get("errors"))[:300])
+            return base64.b64decode(data["result"]["image"])
+    raise RuntimeError(last)
 
 
 def img_pollinations(prompt, seed):  # keyless fallback, quality and speed vary
@@ -250,6 +296,9 @@ def fit_and_save(data, dest):
     im.save(dest, "JPEG", quality=92)
 
 
+LAST_ERR = {"msg": ""}
+
+
 def make_image(prompt, seed, dest):
     cf = bool(env("CF_API_TOKEN") and env("CF_ACCOUNT_ID"))
     prov = img_cloudflare if cf else img_pollinations
@@ -261,7 +310,10 @@ def make_image(prompt, seed, dest):
             QUOTA.set()
             return False
         except Exception as e:
-            print(f"  {prov.__name__}: {e!r}"[:170])
+            LAST_ERR["msg"] = f"{prov.__name__}: {e}"
+            print(f"  {LAST_ERR['msg']}"[:800])
+            if "HTTP 40" in str(e):  # a rejected request will not succeed by repeating it
+                return False
             time.sleep(2 + 3 * attempt)
     return False
 
@@ -273,13 +325,17 @@ def make_images(scenes, bible, wd):
     def one(i):
         return False if QUOTA.is_set() else make_image(image_prompt(scenes[i], bible), seed0 + i * 7, paths[i])
 
+    if not one(0):  # probe with the first picture so a broken setup stops in seconds, not minutes
+        if QUOTA.is_set():
+            raise ImageQuota("the free daily image allowance is used up")
+        raise RuntimeError("the first illustration failed, stopping early. " + LAST_ERR["msg"])
     with ThreadPoolExecutor(max_workers=3) as ex:
-        ok = list(ex.map(one, range(len(scenes))))
+        ok = [True] + list(ex.map(one, range(1, len(scenes))))
     if QUOTA.is_set():
         raise ImageQuota("the free daily image allowance is used up")
     bad = [i for i, o in enumerate(ok) if not o]
     if len(bad) > max(3, len(scenes) // 7):
-        raise RuntimeError(f"{len(bad)} of {len(scenes)} illustrations failed")
+        raise RuntimeError(f"{len(bad)} of {len(scenes)} illustrations failed. " + LAST_ERR["msg"])
     good = [i for i, o in enumerate(ok) if o]
     for i in bad:  # reuse the nearest picture for the few that failed
         shutil.copy(paths[min(good, key=lambda g: abs(g - i))], paths[i])
@@ -470,7 +526,22 @@ def upload(yt, path, story, publish_at, thumb):
     return vid
 
 
+def preflight():
+    """Draw one tiny picture first, so a wrong key or request fails in seconds, not after 10 minutes."""
+    if not (env("CF_API_TOKEN") and env("CF_ACCOUNT_ID")):
+        print("no CF_ACCOUNT_ID / CF_API_TOKEN secrets: using the keyless fallback (lower quality)")
+        return
+    try:
+        img_cloudflare("a small red apple, children's picture-book illustration", 1)
+        print("Cloudflare check: OK")
+    except ImageQuota as e:
+        sys.exit(f"Cloudflare free daily allowance is used up: {e}")
+    except Exception as e:
+        sys.exit(f"Cloudflare check FAILED -> {e}")
+
+
 def main():
+    preflight()
     hist = load_json(HIST, [])
     bible = load_bible()
     yt = None
@@ -517,4 +588,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
