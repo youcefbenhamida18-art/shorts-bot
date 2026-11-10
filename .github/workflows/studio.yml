@@ -45,6 +45,7 @@ jobs:
         run: pip install -r requirements.txt
       - name: Run
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_KEY_KIDS: ${{ secrets.GEMINI_API_KEY_KIDS }}
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
