@@ -138,7 +138,7 @@ def _gemini_only(prompt):
     if _models["good"] in models:
         models = [_models["good"]] + [m for m in models if m != _models["good"]]
     last = "no model available"
-    for model in models[:8]:
+    for model in models[:4]:
         for attempt in range(2):
             try:
                 r = requests.post(
@@ -154,7 +154,7 @@ def _gemini_only(prompt):
                     last = f"{model}: rate limited ({kind}) {r.text[:160]}"
                     if "limit: 0" in r.text or "PerDay" in r.text:  # not in the free tier, or today's quota is gone
                         break
-                    time.sleep(20)
+                    time.sleep(15)
                     continue
                 if r.status_code >= 400:
                     last = f"{model}: HTTP {r.status_code} {r.text[:160]}"
@@ -704,4 +704,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
