@@ -31,6 +31,16 @@ import requests
 
 import main as core
 
+# تخصيص مفتاح Gemini لقناة الأطفال إذا كان متوفراً
+kids_key = os.environ.get("KIDS_GEMINI_API_KEY") or os.environ.get("GEMINI_API_KEY_KIDS")
+if kids_key and hasattr(core, "genai"):
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=kids_key)
+    except Exception:
+        pass
+
+
 env = core.env
 FORMAT = env("KIDS_FORMAT", "long")  # long | short
 LANGV = env("KIDS_LANG", "en")  # en | ar
