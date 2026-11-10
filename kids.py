@@ -540,15 +540,26 @@ def preflight():
         sys.exit(f"Cloudflare check FAILED -> {e}")
 
 
+def youtube_login():
+    """Log in to the KIDS channel now, so a wrong token fails in seconds, not after an hour of rendering."""
+    if env("YT_REFRESH_TOKEN_KIDS"):
+        os.environ["YT_REFRESH_TOKEN"] = env("YT_REFRESH_TOKEN_KIDS")
+    elif env("KIDS_ON_MAIN_CHANNEL") != "1":
+        sys.exit("YT_REFRESH_TOKEN_KIDS secret is missing: kids videos must go to the kids channel, not the main one.")
+    yt = core.youtube()
+    try:
+        name = yt.channels().list(part="snippet", mine=True).execute()["items"][0]["snippet"]["title"]
+    except Exception as e:
+        sys.exit("YouTube login failed - check YT_CLIENT_ID, YT_CLIENT_SECRET and YT_REFRESH_TOKEN_KIDS: " + repr(e)[:220])
+    print(f"YouTube login OK, uploading to channel: {name}")
+    return yt
+
+
 def main():
     preflight()
     hist = load_json(HIST, [])
+    yt = youtube_login() if MODE != "dry" else None
     bible = load_bible()
-    yt = None
-    if MODE != "dry":
-        if env("YT_REFRESH_TOKEN_KIDS"):  # a separate kids channel
-            os.environ["YT_REFRESH_TOKEN"] = env("YT_REFRESH_TOKEN_KIDS")
-        yt = core.youtube()
     themes = pick_themes(COUNT, hist, bible)
     when = slots(len(themes))
     print(f"{len(themes)} themes, format={FORMAT}, mode={MODE}, lang={LANGV}")
