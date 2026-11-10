@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+here#!/usr/bin/env python3
 """
 Kids Story Studio
 Illustrated stories for children -> long videos (~13 min, 16:9) or Shorts (~1 min, 9:16).
@@ -249,7 +249,7 @@ def img_cloudflare(prompt, seed):
     for model in models:
         for body in cf_bodies(model, prompt):
             r = requests.post(f"{base}/ai/run/{model}", headers=hdr, json=body, timeout=150)
-            low = r.text.lower()
+            low = r.text.lower() if r.status_code >= 400 else ""  # never scan a good answer: image data can contain any digits
             if r.status_code == 402 or "daily free allocation" in low or "4006" in low:
                 raise ImageQuota(r.text[:200])
             if r.status_code == 429:
@@ -306,7 +306,9 @@ def make_image(prompt, seed, dest):
         try:
             fit_and_save(prov(prompt, seed + attempt), dest)
             return True
-        except ImageQuota:
+        except ImageQuota as e:
+            LAST_ERR["msg"] = f"quota message from Cloudflare: {e}"
+            print(f"  {LAST_ERR['msg']}"[:600])
             QUOTA.set()
             return False
         except Exception as e:
@@ -327,12 +329,12 @@ def make_images(scenes, bible, wd):
 
     if not one(0):  # probe with the first picture so a broken setup stops in seconds, not minutes
         if QUOTA.is_set():
-            raise ImageQuota("the free daily image allowance is used up")
+            raise ImageQuota("the free daily image allowance is used up. " + LAST_ERR["msg"])
         raise RuntimeError("the first illustration failed, stopping early. " + LAST_ERR["msg"])
     with ThreadPoolExecutor(max_workers=3) as ex:
         ok = [True] + list(ex.map(one, range(1, len(scenes))))
     if QUOTA.is_set():
-        raise ImageQuota("the free daily image allowance is used up")
+        raise ImageQuota("the free daily image allowance is used up. " + LAST_ERR["msg"])
     bad = [i for i, o in enumerate(ok) if not o]
     if len(bad) > max(3, len(scenes) // 7):
         raise RuntimeError(f"{len(bad)} of {len(scenes)} illustrations failed. " + LAST_ERR["msg"])
