@@ -1,4 +1,4 @@
-here#!/usr/bin/env python3
+#!/usr/bin/env python3
 """
 Kids Story Studio
 Illustrated stories for children -> long videos (~13 min, 16:9) or Shorts (~1 min, 9:16).
@@ -297,10 +297,11 @@ def fit_and_save(data, dest):
 
 
 LAST_ERR = {"msg": ""}
+KEYLESS = {"on": False}
 
 
 def make_image(prompt, seed, dest):
-    cf = bool(env("CF_API_TOKEN") and env("CF_ACCOUNT_ID"))
+    cf = bool(env("CF_API_TOKEN") and env("CF_ACCOUNT_ID")) and not KEYLESS["on"]
     prov = img_cloudflare if cf else img_pollinations
     for attempt in range(3):
         try:
@@ -309,6 +310,12 @@ def make_image(prompt, seed, dest):
         except ImageQuota as e:
             LAST_ERR["msg"] = f"quota message from Cloudflare: {e}"
             print(f"  {LAST_ERR['msg']}"[:600])
+            if env("KEYLESS_FALLBACK", "1") != "0":  # keep going with the free keyless service
+                if not KEYLESS["on"]:
+                    print("  switching to the keyless image service for the rest of this run")
+                KEYLESS["on"] = True
+                prov = img_pollinations
+                continue
             QUOTA.set()
             return False
         except Exception as e:
@@ -537,7 +544,10 @@ def preflight():
         img_cloudflare("a small red apple, children's picture-book illustration", 1)
         print("Cloudflare check: OK")
     except ImageQuota as e:
-        sys.exit(f"Cloudflare free daily allowance is used up: {e}")
+        if env("KEYLESS_FALLBACK", "1") == "0":
+            sys.exit(f"Cloudflare free daily allowance is used up: {e}")
+        KEYLESS["on"] = True
+        print("Cloudflare allowance is used up (" + str(e)[:200] + ") -> using the keyless image service today")
     except Exception as e:
         sys.exit(f"Cloudflare check FAILED -> {e}")
 
@@ -558,6 +568,8 @@ def youtube_login():
 
 
 def main():
+    if not hasattr(core, "cf_llm_json"):
+        print("WARNING: main.py in the repository is the OLD version (no Cloudflare text fallback, slow Gemini waits). Replace it with the new main.py.")
     preflight()
     hist = load_json(HIST, [])
     yt = youtube_login() if MODE != "dry" else None
